@@ -1,41 +1,36 @@
 package com.example.bluechat;
 
-import static android.widget.Toast.LENGTH_SHORT;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
-import android.bluetooth.BluetoothA2dp;
+import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.Toast;
 
-import java.nio.charset.StandardCharsets;
-
 public class MainActivity extends AppCompatActivity {
-    private static final int LOCATION_PERMISSION_REQUEST = 101;
-    private final int SELECT_DEVICE = 102;
-
 
     private Context context;
     private BluetoothAdapter bluetoothAdapter;
@@ -44,8 +39,10 @@ public class MainActivity extends AppCompatActivity {
     private ListView listMainChat;
     private EditText edCreateMessage;
     private Button btnSendMessage;
-    private ArrayAdapter<String > adapterMainChat;
+    private ArrayAdapter<String> adapterMainChat;
 
+    private final int LOCATION_PERMISSION_REQUEST = 101;
+    private final int SELECT_DEVICE = 102;
 
     public static final int MESSAGE_STATE_CHANGED = 0;
     public static final int MESSAGE_READ = 1;
@@ -53,14 +50,63 @@ public class MainActivity extends AppCompatActivity {
     public static final int MESSAGE_DEVICE_NAME = 3;
     public static final int MESSAGE_TOAST = 4;
 
-    public static final String DEVICE_NAME = "Device Name";
+    public static final String DEVICE_NAME = "deviceName";
     public static final String TOAST = "toast";
     private String connectedDevice;
 
+    private static String TAG = "MainActivity";
+
+    /**
+     * This block is for requesting permissions on Android 12+
+     */
+
+    private static final int PERMISSIONS_REQUEST_CODE = 191;
+    private static final String[] BLE_PERMISSIONS = new String[]{
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+    };
+
+    private static final String[] ANDROID_12_BLE_PERMISSIONS = new String[]{
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+    };
+
+    public static void requestBlePermissions(Activity activity, int requestCode) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            ActivityCompat.requestPermissions(activity, ANDROID_12_BLE_PERMISSIONS, requestCode);
+        else
+            ActivityCompat.requestPermissions(activity, BLE_PERMISSIONS, requestCode);
+    }
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        context = this;
+
+        // added - new
+        requestBlePermissions(this, PERMISSIONS_REQUEST_CODE);
+
+        init();
+        initBluetooth();
+        chatUtils = new ChatUtils(context, handler);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == SELECT_DEVICE && resultCode == RESULT_OK) {
+            String address = data.getStringExtra("deviceAddress");
+            chatUtils.connect(bluetoothAdapter.getRemoteDevice(address));
+        }
+        super.onActivityResult(requestCode, resultCode, data);
+    }
 
     private Handler handler = new Handler(new Handler.Callback() {
         @Override
-        public boolean handleMessage(@NonNull Message message) {
+        public boolean handleMessage(Message message) {
             switch (message.what) {
                 case MESSAGE_STATE_CHANGED:
                     switch (message.arg1) {
@@ -71,65 +117,52 @@ public class MainActivity extends AppCompatActivity {
                             setState("Not Connected");
                             break;
                         case ChatUtils.STATE_CONNECTING:
-                            setState("Not Connecting .....");
+                            setState("Connecting...");
                             break;
                         case ChatUtils.STATE_CONNECTED:
                             setState("Connected: " + connectedDevice);
                             break;
                     }
                     break;
-                case MESSAGE_READ:
-                    byte[] buffer = (byte[] ) message.obj;
-                    String inputBuffer = new String(buffer,0,message.arg1);
-                    adapterMainChat.add(connectedDevice+": "+inputBuffer);
-                    break;
                 case MESSAGE_WRITE:
                     byte[] buffer1 = (byte[]) message.obj;
                     String outputBuffer = new String(buffer1);
-                    adapterMainChat.add("Me: "+outputBuffer);
+                    adapterMainChat.add("Me: " + outputBuffer);
+                    break;
+                case MESSAGE_READ:
+                    byte[] buffer = (byte[]) message.obj;
+                    String inputBuffer = new String(buffer, 0, message.arg1);
+                    adapterMainChat.add(connectedDevice + ": " + inputBuffer);
                     break;
                 case MESSAGE_DEVICE_NAME:
                     connectedDevice = message.getData().getString(DEVICE_NAME);
-                    Toast.makeText(context, connectedDevice, LENGTH_SHORT).show();
+                    Toast.makeText(context, "Message device name: " + connectedDevice, Toast.LENGTH_SHORT).show();
                     break;
                 case MESSAGE_TOAST:
-                    Toast.makeText(context, message.getData().getString(TOAST), LENGTH_SHORT).show();
+                    Toast.makeText(context, message.getData().getString(TOAST), Toast.LENGTH_SHORT).show();
                     break;
             }
             return false;
         }
     });
 
-    public void setState(CharSequence subTitle) {
+    private void setState(CharSequence subTitle) {
         getSupportActionBar().setSubtitle(subTitle);
     }
 
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-        context = this;
-
-        init();
-        initBluetooth();
-        chatUtils = new ChatUtils(context, handler);
-    }
-
-    private void init(){
+    private void init() {
         listMainChat = findViewById(R.id.list_conversation);
         edCreateMessage = findViewById(R.id.ed_enter_message);
         btnSendMessage = findViewById(R.id.btn_send_msg);
 
-        adapterMainChat = new ArrayAdapter<String>(context,R.layout.message_layout);
-        listMainChat.setOnItemClickListener((AdapterView.OnItemClickListener) adapterMainChat);
+        adapterMainChat = new ArrayAdapter<String>(context, R.layout.message_layout);
+        listMainChat.setAdapter(adapterMainChat);
 
         btnSendMessage.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 String message = edCreateMessage.getText().toString();
-                if(!message.isEmpty()){
+                if (!message.isEmpty()) {
                     edCreateMessage.setText("");
                     chatUtils.write(message.getBytes());
                 }
@@ -140,7 +173,7 @@ public class MainActivity extends AppCompatActivity {
     private void initBluetooth() {
         bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
         if (bluetoothAdapter == null) {
-            Toast.makeText(context, "No Bluetooth Found ", LENGTH_SHORT).show();
+            Toast.makeText(context, "No bluetooth found", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -151,95 +184,43 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-
+    public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
             case R.id.menu_search_devices:
-                checkPermissions();
+                //checkPermissions();
+                // changed
+                Intent intent = new Intent(context, DeviceListActivity.class);
+                startActivityForResult(intent, SELECT_DEVICE);
                 return true;
-
             case R.id.menu_enable_bluetooth:
                 enableBluetooth();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
         }
-
     }
 
-    private void checkPermissions() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, LOCATION_PERMISSION_REQUEST);
+    @SuppressLint("MissingPermission")
+    private void enableBluetooth() {
+        Log.i(TAG, "enableBluetooth");
+        if (!bluetoothAdapter.isEnabled()) {
+            bluetoothAdapter.enable();
+        }
+
+        if (bluetoothAdapter.getScanMode() != BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE) {
+            Log.i(TAG, "enableBluetooth request discoverable");
+            Intent discoveryIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
+            discoveryIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
+            startActivity(discoveryIntent);
         } else {
-            Intent intent = new Intent(context, DeviceListActivity.class);
-            startActivityForResult(intent, SELECT_DEVICE);
+            Log.i(TAG, "enableBluetooth device is already discoverable");
         }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        if (requestCode == SELECT_DEVICE && resultCode == RESULT_OK) {
-            String address = data.getStringExtra("Device Adress");
-            chatUtils.connect(bluetoothAdapter.getRemoteDevice(address));
-
-        }super.onActivityResult(requestCode, resultCode, data);
-    }
-
-        @Override
-        public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-            if (requestCode == LOCATION_PERMISSION_REQUEST) {
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Intent intent = new Intent(context, DeviceListActivity.class);
-                    startActivityForResult(intent, SELECT_DEVICE);
-                } else {
-                    new AlertDialog.Builder(context)
-                            .setCancelable(false)
-                            .setMessage("Location permission is required.\n Please grant")
-                            .setPositiveButton("Grant", new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialogInterface, int i) {
-                                    checkPermissions();
-                                }
-                            })
-                            .setNegativeButton("Deny", new DialogInterface.OnClickListener() {
-                                @Override
-                                public void onClick(DialogInterface dialogInterface, int i) {
-                                    MainActivity.this.finish();
-                                }
-                            }).show();
-                }
-            } else {
-                super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-            }
-        }
-
-        private void enableBluetooth() {
-            if (bluetoothAdapter.isEnabled()) {
-                Toast.makeText(context, "Bluetooth Already Enabled", LENGTH_SHORT).show();
-            } else {
-
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-                    // TODO: Consider calling
-                    //    ActivityCompat#requestPermissions
-                    // here to request the missing permissions, and then overriding
-                    //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
-                    //                                          int[] grantResults)
-                    // to handle the case where the user grants the permission. See the documentation
-                    // for ActivityCompat#requestPermissions for more details.
-                    return;
-                }
-                bluetoothAdapter.enable();
-        }
-        if(bluetoothAdapter.getScanMode()!=BluetoothAdapter.SCAN_MODE_CONNECTABLE_DISCOVERABLE){
-            Intent discoveryIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-            discoveryIntent.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION,300);
-            startActivity(discoveryIntent);
-        }
-    }
-
-    public void onDestroy(){
+    protected void onDestroy() {
         super.onDestroy();
-        if(chatUtils!=null){
+        if (chatUtils != null) {
             chatUtils.stop();
         }
     }
