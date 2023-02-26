@@ -17,7 +17,7 @@ Blue chat is a chatting app through bluetooth where two device having this app c
 ![alt text](https://raw.githubusercontent.com/Tsandesh/BlueChat/main/Demo%20file/demo.jpg)
 
 ## Video Demo
-[[Watch the video]](https://github.com/Tsandesh/BlueChat/blob/main/Demo%20file/demo%20video.mp4?raw=true)
+[[Watch the video]](https://youtu.be/9aRL29JM1Fo)
 
 
 
